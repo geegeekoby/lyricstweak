@@ -78,13 +78,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /var/theos/sdks
-          # Download the SDK zip from Google Drive
-          # Convert the share link to direct download link
-          DRIVE_FILE_ID="1GyJ-k6Bp2zuueTgLLEMopbAWDXRlNJfb"
-          SDK_ZIP="$RUNNER_TEMP/iPhoneOS.zip"
           
-          # Download using curl with direct download URL
-          curl -L "https://drive.google.com/uc?export=download&id=$DRIVE_FILE_ID" -o "$SDK_ZIP" -J
+          # Install gdown for Google Drive downloads
+          pip3 install gdown
+          
+          # Download the SDK zip from Google Drive
+          SDK_ZIP="$RUNNER_TEMP/iPhoneOS.zip"
+          gdown "https://drive.google.com/uc?id=1GyJ-k6Bp2zuueTgLLEMopbAWDXRlNJfb" -O "$SDK_ZIP"
           
           # Extract the SDK
           unzip -q "$SDK_ZIP" -d /var/theos/sdks/
@@ -93,8 +93,12 @@ jobs:
           # Verify the SDK was installed
           if [ ! -d "/var/theos/sdks/iPhoneOS"* ]; then
             echo "SDK installation failed" >&2
+            ls -la /var/theos/sdks/
             exit 1
           fi
+          
+          echo "SDK installed successfully"
+          ls -la /var/theos/sdks/
 
       - name: Build
         run: |
