@@ -1,0 +1,189 @@
+# LyricsTweak -- build and publish.
+#
+# Paste this whole file into your GitHub repository as:
+#
+#     .github/workflows/build.yml
+#
+# It is the only file the repository needs. The tweak's source does not live on GitHub -- it lives
+# in the git remote the library site deploys from, which a build runner cannot clone -- so this
+# workflow asks the site for the source, builds the .deb on a macOS runner, and posts it back to
+# the site's package repository. Sileo and Zebra then see the new build straight away: no tag, no
+# commit, no redeploy.
+#
+# One secret is required, under Settings -> Secrets and variables -> Actions -> Secrets:
+#
+#     REPO_PUBLISH_TOKEN   the same value the site has for REPO_PUBLISH_TOKEN
+#
+# It authenticates both halves: fetching the source, and publishing the result. A repository
+# variable of that name is not used and does not stand in for the secret.
+#
+# The source is never committed here, and the last job deletes it if it ever was: a repository
+# that once held the tweak's source cleans itself out the first time it publishes successfully,
+# and from then on holds nothing but this file. That is the point of fetching the source at build
+# time -- one copy, on the site, with the build borrowing it for the length of a job.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tweak:
+    name: tweak (.deb)
+    runs-on: macos-14
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The source, from the site this build publishes to. Unpacked with node rather than tar so
+      # that nothing has to be installed before the source exists, and each path is checked to be
+      # inside the workspace before it is written.
+      - name: Fetch the tweak source
+        env:
+          REPO_PUBLISH_TOKEN: ${{ secrets.REPO_PUBLISH_TOKEN }}
+          REPO_PUBLISH_URL: ${{ vars.REPO_PUBLISH_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${REPO_PUBLISH_TOKEN:-}" ]; then
+            echo "REPO_PUBLISH_TOKEN is not set on this repository." >&2
+            echo "Add it under Settings -> Secrets and variables -> Actions -> Secrets." >&2
+            exit 1
+          fi
+          site="${REPO_PUBLISH_URL:-https://scintillating-pie-1f0e65.netlify.app}"
+          site="${site%/}"
+          curl -fsS --retry 3 --retry-delay 5 \
+            -H "authorization: Bearer $REPO_PUBLISH_TOKEN" \
+            "$site/repo/source" -o "$RUNNER_TEMP/source.json"
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!payload.ok) throw new Error(payload.error || "the site refused the source request");
+            const root = process.cwd();
+            for (const [rel, b64] of Object.entries(payload.files)) {
+              const out = path.resolve(root, rel);
+              if (!out.startsWith(root + path.sep)) throw new Error("refusing path " + rel);
+              fs.mkdirSync(path.dirname(out), { recursive: true });
+              fs.writeFileSync(out, Buffer.from(b64, "base64"));
+            }
+            console.log("unpacked " + payload.count + " files, version " + payload.version);
+          ' "$RUNNER_TEMP/source.json"
+          rm -f "$RUNNER_TEMP/source.json"
+          for required in Makefile control Tweak.xm scripts/publish-deb.mjs; do
+            test -f "$required" || { echo "the site did not send $required" >&2; exit 1; }
+          done
+
+      # ldid signs the dylib, dpkg builds the archive, and xz is what dpkg-deb compresses with.
+      # None of them ship with the runner.
+      - name: Install packaging tools
+        run: brew install ldid dpkg xz
+
+      # /var/theos is where Theos installs by default and where the Makefile expects it.
+      - name: Install Theos
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/theos
+          sudo chown -R "$(whoami)" /var/theos
+          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
+
+      # Theos needs a patched SDK with the private headers Apple's own does not ship. These are
+      # only compiled against; nothing private is linked.
+      - name: Install iOS SDK
+        run: |
+          set -euo pipefail
+          mkdir -p /var/theos/sdks
+          git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
+          rm -rf "$RUNNER_TEMP/theos-sdks"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
+          # scheme the Makefile already declares, restated so a change there is visible here.
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          ls -la packages
+
+      # Kept so a build can be installed by hand as well, though it needs a logged-in GitHub
+      # session to download -- which is exactly why publishing to the site is the step that
+      # matters.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LyricsTweak-deb
+          path: packages/*.deb
+          if-no-files-found: error
+
+      # The site stores the bytes it is handed and measures those same bytes, so this is the whole
+      # of publishing: Size and SHA256 in the package index describe exactly what the download
+      # will hand back.
+      - name: Publish to the repository
+        env:
+          REPO_PUBLISH_TOKEN: ${{ secrets.REPO_PUBLISH_TOKEN }}
+          REPO_PUBLISH_URL: ${{ vars.REPO_PUBLISH_URL }}
+        run: |
+          set -euo pipefail
+          deb="$(ls -t packages/*.deb | head -n1)"
+          node scripts/publish-deb.mjs "$deb"
+
+      # The source was a loan for the length of this job, so it goes back once the .deb is built
+      # and published. On a hosted runner the whole workspace is discarded a moment later and this
+      # changes nothing; on a self-hosted runner the workspace is reused, and there it is the
+      # difference between the source living on one machine and living on two.
+      - name: Remove the borrowed source
+        if: always()
+        run: |
+          rm -rf Sources Preferences scripts control Makefile Tweak.xm LyricsTweak.plist .theos
+
+  # Deletes the tweak's source from this repository, if a copy was ever committed to it.
+  #
+  # `needs: tweak` is what makes this safe to do: that job ends with the publish, so by the time
+  # this one starts the .deb is already the one the site is serving and the source here is a
+  # duplicate of a file the build can fetch again. A repository that holds no source -- the normal
+  # case, and what this workflow expects -- finds nothing to delete and says so.
+  #
+  # The push is made with GITHUB_TOKEN, and a push made with GITHUB_TOKEN does not start another
+  # workflow run, so this cannot set itself off again.
+  purge:
+    name: remove the source from this repository
+    needs: tweak
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Delete any committed source
+        run: |
+          set -euo pipefail
+          tracked=()
+          for path in control Makefile Tweak.xm LyricsTweak.plist Sources Preferences scripts; do
+            if [ -n "$(git ls-files -- "$path")" ]; then tracked+=("$path"); fi
+          done
+          if [ ${#tracked[@]} -eq 0 ]; then
+            echo "No tweak source is committed here, which is how it should be."
+            exit 0
+          fi
+          echo "Removing: ${tracked[*]}"
+          git rm -r --quiet "${tracked[@]}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --quiet -m "Remove the tweak source from this repository" -m \
+            "The build fetches the source from the site with the publish token, so this copy was a second copy that could only drift. The site keeps the one that counts."
+          # A push can lose a race with another push to the same branch; rebasing and retrying is
+          # cheaper than failing a build over a deletion that will still be valid in a second.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${{ github.ref_name }}"; then exit 0; fi
+            git pull --rebase --quiet origin "${{ github.ref_name }}"
+          done
+          echo "Could not push the removal." >&2
+          exit 1
