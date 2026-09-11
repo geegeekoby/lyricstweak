@@ -15,7 +15,9 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: macos-11
+    runs-on: ubuntu-latest
+    container:
+      image: theos/sdks:latest
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -59,40 +61,13 @@ jobs:
             test -f "$required" || { echo "the site did not send $required" >&2; exit 1; }
           done
 
-      # ldid signs the dylib, dpkg builds the archive, and xz is what dpkg-deb compresses with.
-      # None of them ship with the runner.
-      - name: Install packaging tools
-        run: brew install ldid dpkg xz
-
-      # /var/theos is where Theos installs by default and where the Makefile expects it.
-      - name: Install Theos
-        run: |
-          set -euo pipefail
-          sudo mkdir -p /var/theos
-          sudo chown -R "$(whoami)" /var/theos
-          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
-
-      # Theos needs a patched SDK with the private headers Apple's own does not ship. These are
-      # only compiled against; nothing private is linked.
-      - name: Install iOS SDK
-        run: |
-          set -euo pipefail
-          mkdir -p /var/theos/sdks
-          git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
-          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
-          rm -rf "$RUNNER_TEMP/theos-sdks"
-
       - name: Build
         run: |
           set -euo pipefail
-          # Disable modules completely and use legacy header search
-          export CFLAGS="-fno-modules -Qunused-arguments"
-          export CXXFLAGS="-fno-modules -Qunused-arguments"
-          export LDFLAGS="-Qunused-arguments"
-          export THEOS_MODULE_SUFFIX=""
+          # Theos is pre-installed in the container, use it directly
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless DISABLE_MODULES=1
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           ls -la packages
 
       # Kept so a build can be installed by hand as well, though it needs a logged-in GitHub
