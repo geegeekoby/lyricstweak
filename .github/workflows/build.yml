@@ -15,9 +15,8 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: ubuntu-latest
-    container:
-      image: theos/sdks:latest
+    runs-on: macos-latest
+    timeout-minutes: 120
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -61,10 +60,36 @@ jobs:
             test -f "$required" || { echo "the site did not send $required" >&2; exit 1; }
           done
 
+      # ldid signs the dylib, dpkg builds the archive, and xz is what dpkg-deb compresses with.
+      # None of them ship with the runner.
+      - name: Install packaging tools
+        run: brew install ldid dpkg xz
+
+      # /var/theos is where Theos installs by default and where the Makefile expects it.
+      - name: Install Theos
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/theos
+          sudo chown -R "$(whoami)" /var/theos
+          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
+
+      # Theos needs a patched SDK with the private headers Apple's own does not ship. These are
+      # only compiled against; nothing private is linked.
+      - name: Install iOS SDK
+        run: |
+          set -euo pipefail
+          mkdir -p /var/theos/sdks
+          git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
+          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
+          rm -rf "$RUNNER_TEMP/theos-sdks"
+
       - name: Build
         run: |
           set -euo pipefail
-          # Theos is pre-installed in the container, use it directly
+          # Use legacy Objective-C runtime and disable new C++ features that cause module errors
+          export ARCHS=arm64
+          export TARGET=iphone:clang:16.5:15.0
+          export THEOS_DEVICE_IP=
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
