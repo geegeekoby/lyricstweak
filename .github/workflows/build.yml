@@ -15,7 +15,7 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: macos-13
+    runs-on: macos-12
     steps:
       - uses: actions/setup-node@v4
         with:
