@@ -1,27 +1,3 @@
-# LyricsTweak -- build and publish.
-#
-# Paste this whole file into your GitHub repository as:
-#
-#     .github/workflows/build.yml
-#
-# It is the only file the repository needs. The tweak's source does not live on GitHub -- it lives
-# in the git remote the library site deploys from, which a build runner cannot clone -- so this
-# workflow asks the site for the source, builds the .deb on a macOS runner, and posts it back to
-# the site's package repository. Sileo and Zebra then see the new build straight away: no tag, no
-# commit, no redeploy.
-#
-# One secret is required, under Settings -> Secrets and variables -> Actions -> Secrets:
-#
-#     REPO_PUBLISH_TOKEN   the same value the site has for REPO_PUBLISH_TOKEN
-#
-# It authenticates both halves: fetching the source, and publishing the result. A repository
-# variable of that name is not used and does not stand in for the secret.
-#
-# The source is never committed here, and the last job deletes it if it ever was: a repository
-# that once held the tweak's source cleans itself out the first time it publishes successfully,
-# and from then on holds nothing but this file. That is the point of fetching the source at build
-# time -- one copy, on the site, with the build borrowing it for the length of a job.
-
 name: build
 
 on:
@@ -39,7 +15,7 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -111,6 +87,8 @@ jobs:
           set -euo pipefail
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
+          export CFLAGS="-fno-modules"
+          export CXXFLAGS="-fno-modules"
           make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           ls -la packages
 
