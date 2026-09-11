@@ -73,20 +73,33 @@ jobs:
           sudo chown -R "$(whoami)" /var/theos
           git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
 
-      # Theos needs a patched SDK with the private headers Apple's own does not ship. These are
-      # only compiled against; nothing private is linked.
+      # Download and install iOS SDK from Google Drive
       - name: Install iOS SDK
         run: |
           set -euo pipefail
           mkdir -p /var/theos/sdks
-          git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
-          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS15.7.sdk" /var/theos/sdks/
-          rm -rf "$RUNNER_TEMP/theos-sdks"
+          # Download the SDK zip from Google Drive
+          # Convert the share link to direct download link
+          DRIVE_FILE_ID="1GyJ-k6Bp2zuueTgLLEMopbAWDXRlNJfb"
+          SDK_ZIP="$RUNNER_TEMP/iPhoneOS.zip"
+          
+          # Download using curl with direct download URL
+          curl -L "https://drive.google.com/uc?export=download&id=$DRIVE_FILE_ID" -o "$SDK_ZIP" -J
+          
+          # Extract the SDK
+          unzip -q "$SDK_ZIP" -d /var/theos/sdks/
+          rm -f "$SDK_ZIP"
+          
+          # Verify the SDK was installed
+          if [ ! -d "/var/theos/sdks/iPhoneOS"* ]; then
+            echo "SDK installation failed" >&2
+            exit 1
+          fi
 
       - name: Build
         run: |
           set -euo pipefail
-          # Use iOS 15.7 SDK which is compatible with modern Xcode
+          # Use the downloaded iOS SDK
           export ARCHS=arm64
           export TARGET=iphone:clang:15.7:15.0
           export THEOS_DEVICE_IP=
