@@ -80,15 +80,15 @@ jobs:
           set -euo pipefail
           mkdir -p /var/theos/sdks
           git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
-          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
+          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS15.7.sdk" /var/theos/sdks/
           rm -rf "$RUNNER_TEMP/theos-sdks"
 
       - name: Build
         run: |
           set -euo pipefail
-          # Use legacy Objective-C runtime and disable new C++ features that cause module errors
+          # Use iOS 15.7 SDK which is compatible with modern Xcode
           export ARCHS=arm64
-          export TARGET=iphone:clang:16.5:15.0
+          export TARGET=iphone:clang:15.7:15.0
           export THEOS_DEVICE_IP=
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
