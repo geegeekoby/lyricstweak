@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LyricsTweak repository</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #f3f1ee;
+    --dim: #9d978e;
+    --line: rgba(243, 241, 238, 0.12);
+    --accent: #ffb489;
+    --panel: rgba(243, 241, 238, 0.035);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 4rem 1.5rem 6rem;
+    background: #0d0c0b;
+    color: var(--ink);
+    font: 16px/1.65 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    justify-content: center;
+  }
+  main { width: 100%; max-width: 46rem; }
+  h1 { font-size: 1.85rem; letter-spacing: -0.02em; margin: 0 0 0.4rem; }
+  h2 { font-size: 1.05rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); margin: 3rem 0 1rem; }
+  p { color: #d8d3cc; }
+  a { color: var(--accent); }
+  .lede { font-size: 1.05rem; color: var(--dim); margin: 0 0 2.5rem; }
+  code, .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9rem; }
+  .path { color: var(--accent); }
+  footer { margin-top: 3.5rem; font-size: 0.85rem; color: var(--dim); }
+  .note { color: var(--dim); font-size: 0.9rem; }
+
+  .address {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    padding: 0.9rem 1rem;
+    background: var(--panel);
+  }
+  .address code { flex: 1 1 14rem; font-size: 1rem; color: var(--accent); word-break: break-all; }
+  button, .action {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.85rem;
+    padding: 0.45rem 0.8rem;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  button:hover, .action:hover { border-color: var(--accent); color: var(--accent); }
+  .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+
+  .build {
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    padding: 1.1rem 1.2rem;
+  }
+  .build h3 { margin: 0 0 0.15rem; font-size: 1.05rem; }
+  .build dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 1rem 0 0; font-size: 0.9rem; }
+  .build dt { color: var(--dim); }
+  .build dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; word-break: break-all; }
+  ol { color: #d8d3cc; padding-left: 1.3rem; }
+  ol li { margin-bottom: 0.4rem; }
+  .index { list-style: none; padding: 0; margin: 1rem 0 0; font-size: 0.9rem; }
+  .index li { border-top: 1px solid var(--line); padding: 0.6rem 0; }
+  .index li:last-child { border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>LyricsTweak repository</h1>
+  <p class="lede">
+    The package and the lyrics library are the same address. Add it once and the tweak arrives
+    already pointed at the library it publishes to.
+  </p>
+
+  <div class="address">
+    <code id="address">&mdash;</code>
+    <button id="copy" type="button">Copy</button>
+    <a class="action" id="sileo" href="#">Add to Sileo</a>
+  </div>
+  <p class="note" id="copy-note" aria-live="polite"></p>
+
+  <h2>Adding it by hand</h2>
+  <ol>
+    <li><b>Sileo</b> — Sources, then the <b>+</b> button, then paste the address.</li>
+    <li><b>Zebra</b> — Sources, then <b>Add Source</b>, then paste the address.</li>
+    <li>
+      <b>Anything else</b> — the repository is a plain APT repository, so
+      <code>deb <span class="address-inline">&mdash;</span> ./</code> in a sources list works too.
+    </li>
+  </ol>
+  <p class="note">
+    Then find <b>LyricsTweak</b> under Tweaks and install it. Nothing outside the tweak's own
+    preferences is touched, and the lyrics library is opt-in from the same screen.
+  </p>
+
+  <h2>Current build</h2>
+  <div class="build" id="build">
+    <p class="note" id="build-note">Reading the index&hellip;</p>
+  </div>
+
+  <h2>What the repository serves</h2>
+  <ul class="index">
+    <li><span class="path">/Packages</span> and <span class="path">/Packages.gz</span> &mdash; the index every package manager reads first.</li>
+    <li><span class="path">/Release</span> &mdash; the repository's own description. Unsigned: there is no private key kept here to sign it with, and the package's bytes are verified against the hash in the index regardless.</li>
+    <li><span class="path">/debs/&lt;file&gt;</span> &mdash; the <code>.deb</code> itself, served from the same bytes that were measured for the index. It is not committed to the source repository.</li>
+    <li><span class="path">/depiction/&lt;package&gt;</span> &mdash; the page Sileo shows before you install, and <span class="path">/depiction/&lt;package&gt;.json</span> for Sileo's native rendering of it.</li>
+    <li><span class="path">/repo/manifest</span> &mdash; the same index as JSON, which is what the current build shown above is read from.</li>
+  </ul>
+
+  <h2>Building it yourself</h2>
+  <p>
+    The same <code>.deb</code> is built by GitHub Actions on every push, on a macOS runner with
+    Theos and the iOS 16.5 SDK, published to this repository from there, and additionally attached
+    to a GitHub release when a version tag is pushed. Locally, with Theos installed, it is
+    <code>make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless</code>.
+  </p>
+
+  <footer><a href="/">The lyrics library</a> &middot; runs on Netlify Functions and Netlify Database.</footer>
+</main>
+
+<script>
+  const address = location.origin + "/";
+  document.getElementById("address").textContent = address;
+  for (const node of document.querySelectorAll(".address-inline")) node.textContent = address;
+
+  // Sileo's URL scheme takes the repository address without its scheme, which is how the app's own
+  // "add source" links are written.
+  document.getElementById("sileo").href = `sileo://source/${address}`;
+
+  document.getElementById("copy").addEventListener("click", async () => {
+    const note = document.getElementById("copy-note");
+    try {
+      await navigator.clipboard.writeText(address);
+      note.textContent = "Copied. Paste it into Sileo or Zebra.";
+    } catch {
+      // Clipboard access is refused in plenty of contexts, and a failure that says nothing looks
+      // like a broken button.
+      note.textContent = "Copying was refused — select the address above instead.";
+    }
+  });
+
+  const bytes = (size) => {
+    if (!size) return "unknown";
+    const mega = size / (1024 * 1024);
+    return mega >= 1 ? `${mega.toFixed(2)} MB` : `${Math.round(size / 1024)} KB`;
+  };
+
+  const escape = (value) =>
+    String(value ?? "").replace(/[&<>"]/g, (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[character]));
+
+  fetch("/repo/manifest")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((manifest) => {
+      const build = document.getElementById("build");
+      const packages = manifest?.packages ?? [];
+
+      if (packages.length === 0) {
+        // A repository with nothing in it is the state before the first build has been published,
+        // and it is worth saying so rather than showing an empty box.
+        document.getElementById("build-note").textContent =
+          "No build has been published yet. The repository is valid and empty until a build is published to it.";
+        return;
+      }
+
+      const entry = packages[0];
+      const published = entry.published
+        ? new Date(Number(entry.published) * 1000).toISOString().slice(0, 10)
+        : null;
+
+      build.innerHTML = `
+        <h3>${escape(entry.name || entry.package)} ${escape(entry.version)}</h3>
+        <p class="note">${escape(entry.description?.split("\n")[0] ?? "")}</p>
+        <dl>
+          <dt>Identifier</dt><dd>${escape(entry.package)}</dd>
+          <dt>Architecture</dt><dd>${escape(entry.architecture)}</dd>
+          <dt>Requires</dt><dd>${escape(entry.depends)}</dd>
+          <dt>Size</dt><dd>${bytes(entry.size)}</dd>
+          <dt>SHA256</dt><dd>${escape(entry.sha256)}</dd>
+          ${published ? `<dt>Published</dt><dd>${escape(published)}</dd>` : ""}
+        </dl>
+        <div class="actions">
+          <a class="action" href="/debs/${encodeURIComponent(entry.filename)}">Download the .deb</a>
+          <a class="action" href="/depiction/${encodeURIComponent(entry.package)}">Depiction</a>
+          ${entry.releaseUrl ? `<a class="action" href="${escape(entry.releaseUrl)}">Release notes</a>` : ""}
+        </div>`;
+    })
+    .catch(() => {
+      document.getElementById("build-note").textContent = "The index could not be read.";
+    });
+</script>
+</body>
+</html>

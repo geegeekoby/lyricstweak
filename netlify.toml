@@ -1,0 +1,21 @@
+# The lyrics library the tweak talks to. The tweak itself is built by Theos on a Mac and is not
+# part of what deploys here; what deploys here is the store its offline-music lookups read from
+# and publish to.
+[build]
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  # The tweak's own sources. None of this is used by the library API -- it is bundled so that
+  # `repo-publish` can read the control file when a publisher sends only a .deb, and so that
+  # `repo-source` can hand the build inputs to the macOS runner that compiles them. The runner
+  # cannot clone the remote this site deploys from, so the site serves the source itself.
+  included_files = [
+    "control",
+    "Makefile",
+    "Tweak.xm",
+    "LyricsTweak.plist",
+    "Sources/**",
+    "Preferences/**",
+    "scripts/publish-deb.mjs",
+  ]

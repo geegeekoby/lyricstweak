@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "The empty default the site ships with, and the fallback when nothing has been published yet.",
+    "",
+    "This file is no longer where published builds are recorded. A build is published by posting",
+    "the .deb to /repo/publish, which measures those bytes and keeps the index in Netlify Blobs --",
+    "so the repository updates without a deploy, and without depending on a commit reaching a",
+    "branch this site does not deploy from. That last part is why an earlier design, which had CI",
+    "rewrite this file and push it, left the repository empty: the push went to the GitHub remote,",
+    "and the site deploys from Netlify's own hosted git.",
+    "",
+    "What is still read from here is the repository's own identity -- the origin, label and",
+    "description below -- and the empty package list, so a package manager that adds the source",
+    "before the first build sees a repository with nothing in it rather than a 500."
+  ],
+  "origin": "LyricsTweak",
+  "label": "LyricsTweak",
+  "description": "Timed lyrics on the lock screen, Notification Center, Control Center and the fullscreen player, with a shared lyrics library for the songs no catalogue indexes.",
+  "packages": []
+}
