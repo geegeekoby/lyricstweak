@@ -15,7 +15,7 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -85,11 +85,14 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
+          # Disable modules completely and use legacy header search
+          export CFLAGS="-fno-modules -Qunused-arguments"
+          export CXXFLAGS="-fno-modules -Qunused-arguments"
+          export LDFLAGS="-Qunused-arguments"
+          export THEOS_MODULE_SUFFIX=""
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
-          export CFLAGS="-fno-modules"
-          export CXXFLAGS="-fno-modules"
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless DISABLE_MODULES=1
           ls -la packages
 
       # Kept so a build can be installed by hand as well, though it needs a logged-in GitHub
