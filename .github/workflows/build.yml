@@ -1,8 +1,46 @@
+# LyricsTweak -- build and publish.
+#
+# Paste this whole file into your GitHub repository as:
+#
+#     .github/workflows/build.yml
+#
+# It is the only file the repository needs. The tweak's source does not live on GitHub -- it lives
+# in the git remote the library site deploys from, which a build runner cannot clone -- so this
+# workflow asks the site for the source, builds the .deb on a macOS runner, and posts it back to
+# the site's package repository. Sileo and Zebra then see the new build straight away: no tag, no
+# commit, no redeploy.
+#
+# Builds start three ways: a push to main here, the "Run workflow" button in the Actions tab, and
+# the site itself, which dispatches this workflow whenever it publishes a deploy -- because a
+# deploy is what changes the source this build fetches. That last one needs a token on the site
+# rather than anything here; the site's README covers it.
+#
+# Version numbers are not edited here or on GitHub. The site is asked what to build as at the same
+# moment it is asked for the source: `control` holds the release number a person sets, and the build
+# revision after it moves on its own when the source changes without that number changing. A rebuild
+# over source that has not changed keeps its version, so re-running this workflow does not ask every
+# phone to reinstall a package it already has.
+#
+# One secret is required, under Settings -> Secrets and variables -> Actions -> Secrets:
+#
+#     REPO_PUBLISH_TOKEN   the same value the site has for REPO_PUBLISH_TOKEN
+#
+# It authenticates both halves: fetching the source, and publishing the result. A repository
+# variable of that name is not used and does not stand in for the secret.
+#
+# The source is never committed here, and the last job deletes it if it ever was: a repository
+# that once held the tweak's source cleans itself out the first time it publishes successfully,
+# and from then on holds nothing but this file. That is the point of fetching the source at build
+# time -- one copy, on the site, with the build borrowing it for the length of a job.
+
 name: build
 
 on:
   push:
     branches: [main]
+  # How the site starts a build. Publishing a deploy changes the source this workflow will fetch,
+  # so the site dispatches this workflow when that happens -- the same request the "Run workflow"
+  # button makes. It is also that button, so removing this line takes both away.
   workflow_dispatch:
 
 permissions:
@@ -15,8 +53,7 @@ concurrency:
 jobs:
   tweak:
     name: tweak (.deb)
-    runs-on: macos-latest
-    timeout-minutes: 120
+    runs-on: macos-14
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -54,6 +91,28 @@ jobs:
               fs.writeFileSync(out, Buffer.from(b64, "base64"));
             }
             console.log("unpacked " + payload.count + " files, version " + payload.version);
+            // The version this build goes out as is decided by the site, not by this file. It
+            // knows what is already published and whether these exact inputs are what produced
+            // it, which is what separates "the code changed and control was not touched" from
+            // "somebody re-ran the build over the same commit". The control file that gets
+            // packaged is rewritten to match, so the version in the index and the version
+            // recorded inside the .deb are the same string -- if they ever differed, a phone
+            // would install the update and keep being offered it forever.
+            const build = payload.buildVersion || payload.version;
+            if (!build) throw new Error("the site did not say what version to build");
+            if (build !== payload.version) {
+              const controlPath = path.join(root, "control");
+              const control = fs.readFileSync(controlPath, "utf8");
+              const rewritten = control.replace(/^Version:.*$/m, "Version: " + build);
+              if (rewritten === control) throw new Error("control has no Version line to set");
+              fs.writeFileSync(controlPath, rewritten);
+            }
+            console.log("building as " + build + " -- " + (payload.versionReason || "no reason given"));
+            // Handed to the publish step through the job environment, and from there recorded
+            // against the published package. It is what the next build compares against.
+            if (payload.sourceHash && process.env.GITHUB_ENV) {
+              fs.appendFileSync(process.env.GITHUB_ENV, "LT_SOURCE_HASH=" + payload.sourceHash + "\n");
+            }
           ' "$RUNNER_TEMP/source.json"
           rm -f "$RUNNER_TEMP/source.json"
           for required in Makefile control Tweak.xm scripts/publish-deb.mjs; do
@@ -73,8 +132,8 @@ jobs:
           sudo chown -R "$(whoami)" /var/theos
           git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
 
-      # Theos needs a patched SDK with the private headers Apple's own does not ship. These are
-      # only compiled against; nothing private is linked.
+      # Theos needs a patched SDK. The private headers come from Theos itself, but this SDK is the
+      # only place the Preferences framework stub exists, and the settings bundle links against it.
       - name: Install iOS SDK
         run: |
           set -euo pipefail
@@ -82,18 +141,19 @@ jobs:
           git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
           cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
           rm -rf "$RUNNER_TEMP/theos-sdks"
+          # The prefs bundle links against the Preferences stub that only this SDK carries, and the
+          # Makefile names 16.5 exactly so the runner's newer Xcode SDK cannot be chosen instead.
+          # Checking for the stub here turns a missing or renamed SDK into a one-line failure rather
+          # than a linker error several minutes into the build.
+          stub=/var/theos/sdks/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks/Preferences.framework/Preferences.tbd
+          test -f "$stub" || { echo "The installed SDK has no Preferences stub at $stub." >&2; exit 1; }
 
       - name: Build
         run: |
           set -euo pipefail
-          # Disable modules completely to avoid C++ standard library conflicts
-          export CFLAGS="-fno-modules"
-          export CXXFLAGS="-fno-modules"
-          export LDFLAGS=""
-          export THEOS_MODULE_SUFFIX=""
           # FINALPACKAGE strips the binary and turns off debug logging; rootless is the packaging
           # scheme the Makefile already declares, restated so a change there is visible here.
-          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless DISABLE_MODULES=1
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           ls -la packages
 
       # Kept so a build can be installed by hand as well, though it needs a logged-in GitHub
@@ -112,6 +172,9 @@ jobs:
         env:
           REPO_PUBLISH_TOKEN: ${{ secrets.REPO_PUBLISH_TOKEN }}
           REPO_PUBLISH_URL: ${{ vars.REPO_PUBLISH_URL }}
+          # Set by the fetch step, through the job environment. The publish script sends it on so
+          # the repository remembers which inputs this version was built from.
+          LT_SOURCE_HASH: ${{ env.LT_SOURCE_HASH }}
         run: |
           set -euo pipefail
           deb="$(ls -t packages/*.deb | head -n1)"
