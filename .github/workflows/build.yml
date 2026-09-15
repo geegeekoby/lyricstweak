@@ -120,31 +120,104 @@ jobs:
           done
 
       # ldid signs the dylib, dpkg builds the archive, and xz is what dpkg-deb compresses with.
-      # None of them ship with the runner.
+      # None of them ship with the runner. A tool that is already there is left alone, and Homebrew
+      # is told not to update itself before installing -- on a hosted runner that update is most of
+      # what this step used to cost, and it is spent to learn nothing about three pinned formulae.
       - name: Install packaging tools
-        run: brew install ldid dpkg xz
-
-      # /var/theos is where Theos installs by default and where the Makefile expects it.
-      - name: Install Theos
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+          HOMEBREW_NO_ENV_HINTS: "1"
         run: |
           set -euo pipefail
-          sudo mkdir -p /var/theos
-          sudo chown -R "$(whoami)" /var/theos
-          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git /var/theos
+          missing=""
+          for tool in ldid dpkg xz; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+          if [ -z "$missing" ]; then
+            echo "ldid, dpkg and xz are all installed already."
+          else
+            brew install $missing
+          fi
+
+      # Theos and the SDK are the same bytes on every run, and fetching them again each time is the
+      # bulk of this job: the toolchain is a recursive clone, and theos/sdks is a repository of
+      # entire SDKs. A hosted runner is destroyed when the job ends, so nothing can be installed on
+      # one permanently -- but the Actions cache carries the installed tree from run to run, which
+      # buys the same thing. On a hit it restores a single archive in seconds and the two install
+      # steps below are skipped outright.
+      #
+      # Nothing in the key moves, so the cached toolchain is a pinned toolchain: every build uses
+      # the Theos and SDK that the first run after this key appeared installed, rather than whatever
+      # theos/theos is on the day -- which is also why a green build stays green. To move to a newer
+      # Theos, raise the `-v1` at the end of the key; the next run installs from scratch and caches
+      # that instead.
+      #
+      # Restoring and saving are separate steps on purpose. The plain cache action saves whatever
+      # the path holds when the job ends, including after a failure -- so a clone that died halfway
+      # would be saved, restored by every run after it, and fail each one until somebody worked out
+      # that the key needed raising. The save is down at the bottom instead, where a build has
+      # already shipped a .deb built with this toolchain.
+      - name: Restore cached Theos and iOS SDK
+        id: theos-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/theos
+          key: theos-${{ runner.os }}-${{ runner.arch }}-iPhoneOS16.5-v1
+
+      - name: Install Theos
+        if: steps.theos-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "$HOME/theos"
+          git clone --quiet --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
 
       # Theos needs a patched SDK. The private headers come from Theos itself, but this SDK is the
       # only place the Preferences framework stub exists, and the settings bundle links against it.
-      - name: Install iOS SDK
+      # One SDK is taken out of a repository that holds many: with blobs fetched on demand and a
+      # sparse checkout, a cold run downloads the one it will use rather than all of them. Should a
+      # runner's git not manage that, the plain clone still works and only costs time.
+      - name: Install the iOS SDK
+        if: steps.theos-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p /var/theos/sdks
-          git clone --quiet --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/theos-sdks"
-          cp -r "$RUNNER_TEMP/theos-sdks/iPhoneOS16.5.sdk" /var/theos/sdks/
-          rm -rf "$RUNNER_TEMP/theos-sdks"
+          mkdir -p "$HOME/theos/sdks"
+          sdks="$RUNNER_TEMP/theos-sdks"
+          rm -rf "$sdks"
+          if git clone --quiet --depth 1 --filter=blob:none --sparse \
+               https://github.com/theos/sdks.git "$sdks" \
+             && git -C "$sdks" sparse-checkout set iPhoneOS16.5.sdk \
+             && [ -d "$sdks/iPhoneOS16.5.sdk" ]; then
+            echo "Took iPhoneOS16.5.sdk on its own."
+          else
+            echo "A sparse checkout did not work here; cloning the whole repository instead."
+            rm -rf "$sdks"
+            git clone --quiet --depth 1 https://github.com/theos/sdks.git "$sdks"
+          fi
+          cp -r "$sdks/iPhoneOS16.5.sdk" "$HOME/theos/sdks/"
+          rm -rf "$sdks"
+
+      # /var/theos is where Theos installs by default and where the Makefile expects it, and it is
+      # not a path the cache can keep -- so the cached tree lives in the home directory and
+      # /var/theos points at it. make reads straight through the symlink, so neither the Makefile
+      # nor the local build instructions in the README change. A runner that already has a real
+      # /var/theos -- a self-hosted one, say -- keeps what it has.
+      - name: Put Theos where the Makefile expects it
+        run: |
+          set -euo pipefail
+          if [ -L /var/theos ]; then
+            sudo rm -f /var/theos
+          fi
+          if [ -d /var/theos ]; then
+            echo "/var/theos is a real directory on this runner; using it as it stands."
+          else
+            sudo ln -s "$HOME/theos" /var/theos
+          fi
           # The prefs bundle links against the Preferences stub that only this SDK carries, and the
           # Makefile names 16.5 exactly so the runner's newer Xcode SDK cannot be chosen instead.
-          # Checking for the stub here turns a missing or renamed SDK into a one-line failure rather
-          # than a linker error several minutes into the build.
+          # Checking for the stub here turns a missing SDK -- or a cache saved from a half-finished
+          # install -- into a one-line failure rather than a linker error several minutes into the
+          # build, and it is checked through /var/theos so the symlink is proved at the same time.
           stub=/var/theos/sdks/iPhoneOS16.5.sdk/System/Library/PrivateFrameworks/Preferences.framework/Preferences.tbd
           test -f "$stub" || { echo "The installed SDK has no Preferences stub at $stub." >&2; exit 1; }
 
@@ -179,6 +252,17 @@ jobs:
           set -euo pipefail
           deb="$(ls -t packages/*.deb | head -n1)"
           node scripts/publish-deb.mjs "$deb"
+
+      # Saved here rather than by the restore step above, so that what gets cached is a toolchain
+      # that just built and published the tweak. It only runs when the restore missed -- a key that
+      # is already in the cache cannot be written over -- and it sits after the publish so that
+      # uploading a few hundred megabytes never delays the .deb reaching a phone.
+      - name: Cache the toolchain for the next build
+        if: steps.theos-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/theos
+          key: theos-${{ runner.os }}-${{ runner.arch }}-iPhoneOS16.5-v1
 
       # The source was a loan for the length of this job, so it goes back once the .deb is built
       # and published. On a hosted runner the whole workspace is discarded a moment later and this
